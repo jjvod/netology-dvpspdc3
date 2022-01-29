@@ -185,5 +185,59 @@
     root@netology1:~#
     ```
     Есть ли смысл использовать в bash `&&`, если применить `set -e`?
+
+    >###  `;` -- команды, разделенные `;` выполняются последовательно; командный интерпретатор ждет поочередно завершения каждой из команд. Статус возврата списка в этом случае совпадает со статусом возврата последней выполненной команды.
+    >### `&&` -- управляющий оператор для И-списка. Например, `команда1 && команда2` ==> `команда2` выполнится только если `команда1` вернула статус выхода `0`. 
+    >### `set -e` позволяет немедленно завершать работу, если команда выполнится с ненулевым статусом выхода. Работа командного интерпретатора не завершается, если закончившаяся неудачно команда является частью цикла `until` или `while`, частью оператора `if`, частью списка `&&` или `||`, или если к статусу выхода команды применяется отрицание с помощью оператора `!`.Так что смысл использовать в bash `&&`, если применить `set -e`, есть. 
+
 1. Из каких опций состоит режим bash `set -euxo pipefail` и почему его хорошо было бы использовать в сценариях?
+
+    >### `-e`  позволяет немедленно завершать работу, если команда выполнится с ненулевым статусом выхода. Выше описывал;
+    >### `-u` при подстановке значений параметров рассматривать не установленную переменную как ошибку. При попытке подстановки значения не существующей переменной командный интерпретатор выдает сообщение об ошибке и, если он - не интерактивный, завершает работу с ненулевым статусом выхода;
+    >### `-x` после подстановок в каждой простой команде выдавать значение переменной `PS4`, а затем - команду с результатами подстановок в аргументах.
+    >### `-o pipefail` если установлено, то возвращаемым значением конвейера является значение последней (крайней правой) команды, выходящей с ненулевым статусом, или ноль, если все команды в конвейере выходят успешно. По умолчанию эта опция отключена.
+
+    ```
+     -e  Exit immediately if a command exits with a non-zero status.
+     -u  Treat unset variables as an error when substituting.
+     -x  Print commands and their arguments as they are executed.
+     -o option-name
+        pipefail the return value of a pipeline is the status of the last command to exit with a non-zero status, or zero if no command exited with a non-zero status
+    ```
+
 1. Используя `-o stat` для `ps`, определите, какой наиболее часто встречающийся статус у процессов в системе. В `man ps` ознакомьтесь (`/PROCESS STATE CODES`) что значат дополнительные к основной заглавной буквы статуса процессов. Его можно не учитывать при расчете (считать S, Ss или Ssl равнозначными).
+
+    >### Наиболее часто встречающийся статус `Ss` и `R+` то есть процессы котрые спят и процессы которые работают в интерактивном режиме
+
+    ```
+    vagrant@vagrant:~$ ps -o stat
+    STAT
+    Ss
+    R+
+    vagrant@vagrant:~$
+    ```
+
+    ```
+    PROCESS STATE CODES
+       Here are the different values that the s, stat and state output specifiers (header "STAT" or "S") will display to describe the state of a
+       process:
+
+               D    uninterruptible sleep (usually IO)
+               I    Idle kernel thread
+               R    running or runnable (on run queue)
+               S    interruptible sleep (waiting for an event to complete)
+               T    stopped by job control signal
+               t    stopped by debugger during the tracing
+               W    paging (not valid since the 2.6.xx kernel)
+               X    dead (should never be seen)
+               Z    defunct ("zombie") process, terminated but not reaped by its parent
+
+       For BSD formats and when the stat keyword is used, additional characters may be displayed:
+
+               <    high-priority (not nice to other users)
+               N    low-priority (nice to other users)
+               L    has pages locked into memory (for real-time and custom IO)
+               s    is a session leader
+               l    is multi-threaded (using CLONE_THREAD, like NPTL pthreads do)
+               +    is in the foreground process group
+    ```
