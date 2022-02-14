@@ -147,7 +147,109 @@
 
     После успешной перезагрузки в браузере *на своем ПК* (не в виртуальной машине) вы должны суметь зайти на `localhost:19999`. Ознакомьтесь с метриками, которые по умолчанию собираются Netdata и с комментариями, которые даны к этим метрикам.
 
+    >### Установили, поправили конфигурации, перезапустили, открыли браузер и увидели практически все метрики в красивом графическом интерфейсе
+
+    ![img1](img/netdata.png)
+
 1. Можно ли по выводу `dmesg` понять, осознает ли ОС, что загружена не на настоящем оборудовании, а на системе виртуализации?
+
+    >### Да, ОС понимает что загружена на системе виртуализации
+
+    ```bash
+    vagrant@vagrant:~$ dmesg | grep virtual
+    [    0.003010] CPU MTRRs all blank - virtualized system.
+    [    0.079209] Booting paravirtualized kernel on KVM
+    [    3.101371] systemd[1]: Detected virtualization oracle.
+
+    vagrant@vagrant:~$ dmesg | grep vbox
+    [    0.990760] fbcon: vboxvideodrmfb (fb0) is primary device
+    [    0.997543] vboxvideo 0000:00:02.0: fb0: vboxvideodrmfb frame buffer device
+    [    1.026131] [drm] Initialized vboxvideo 1.0.0 20130823 for 0000:00:02.0 on minor 0
+    [    4.028761] vboxguest: loading out-of-tree module taints kernel.
+    [    4.040888] vboxguest: Successfully loaded version 6.1.26_Ubuntu r145957
+    [    4.040912] vboxguest: misc device minor 58, IRQ 20, I/O port d020, MMIO at 00000000f0400000 (size 0x400000)
+    [    4.040913] vboxguest: Successfully loaded version 6.1.26_Ubuntu r145957 (interface 0x00010004)
+    [    7.210152] vboxsf: g_fHostFeatures=0x8000000f g_fSfFeatures=0x1 g_uSfLastFunction=29
+    [    7.210418] *** VALIDATE vboxsf ***
+    [    7.210424] vboxsf: Successfully loaded version 6.1.26_Ubuntu r145957
+    [    7.210477] vboxsf: Successfully loaded version 6.1.26_Ubuntu r145957 on 5.4.0-96-generic SMP mod_unload modversions  (LINUX_VERSION_CODE=0x5049d)
+    [    7.211618] vboxsf: SHFL_FN_MAP_FOLDER failed for '/vagrant': share not found
+    ```
+
 1. Как настроен sysctl `fs.nr_open` на системе по-умолчанию? Узнайте, что означает этот параметр. Какой другой существующий лимит не позволит достичь такого числа (`ulimit --help`)?
+
+    >### `fs.nr_open` – максимальное количество файловых дескрипторов, которое может выделить процесс. Значение по умолчанию - 1024 * 1024 (1048576), должно быть кратно 1024. `file-max` - но можно глянуть и максимальный предел ОС.
+    
+    ```
+    bash
+    vagrant@vagrant:~$ /sbin/sysctl -n fs.nr_open
+    1048576
+    ```
+    >### Мягкий лимит на пользователя `ulimit -n = 1024` не позволит достичь максимального числа открытых дескрипторов для ядра.
+
+    ```
+    bash
+    vagrant@vagrant:~$ ulimit -n
+    1024
+    ```
+
+    >### `ulimit --help` показал, что для юзера есть `soft` и `hard` лимиты:
+    ```bash
+    vagrant@vagrant:~$ ulimit -Sn
+    1024
+    vagrant@vagrant:~$ ulimit -Hn
+    1048576
+    ```
+
+    >### жесткий лимит на пользователя (не может быть увеличен, только уменьшен) Оба `ulimit -n` НЕ могут превысить системный fs.nr_open
+
 1. Запустите любой долгоживущий процесс (не `ls`, который отработает мгновенно, а, например, `sleep 1h`) в отдельном неймспейсе процессов; покажите, что ваш процесс работает под PID 1 через `nsenter`. Для простоты работайте в данном задании под root (`sudo -i`). Под обычным пользователем требуются дополнительные опции (`--map-root-user`) и т.д.
+
+    >### Как видим процесс `sleep 1h` имеет PID 1
+    ```
+    root@vagrant:~# unshare -f -p --mount-proc sleep 1h &
+    [1] 2335
+    root@vagrant:~# jobs
+    [1]+  Running                 unshare -f -p --mount-proc sleep 1h &
+    root@vagrant:~# ps aux | grep sleep
+    root        2335  0.0  0.0   5480   592 pts/0    S    08:39   0:00 unshare -f -p --mount-proc sleep 1h
+    root        2336  0.0  0.0   5476   528 pts/0    S    08:39   0:00 sleep 1h
+    root        2338  0.0  0.0   6432   736 pts/0    S+   08:39   0:00 grep --color=auto sleep
+    root@vagrant:~# nsenter --target 2336 --pid --mount
+    root@vagrant:/# ps aux
+    USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+    root           1  0.0  0.0   5476   528 pts/0    S    08:39   0:00 sleep 1h
+    root           2  0.0  0.4   7236  4096 pts/0    S    08:39   0:00 -bash
+    root          13  0.0  0.3   8892  3484 pts/0    R+   08:39   0:00 ps aux
+    ```
 1. Найдите информацию о том, что такое `:(){ :|:& };:`. Запустите эту команду в своей виртуальной машине Vagrant с Ubuntu 20.04 (**это важно, поведение в других ОС не проверялось**). Некоторое время все будет "плохо", после чего (минуты) – ОС должна стабилизироваться. Вызов `dmesg` расскажет, какой механизм помог автоматической стабилизации. Как настроен этот механизм по-умолчанию, и как изменить число процессов, которое можно создать в сессии?
+
+    >### Это ни что иное как один из вариантов fork-бомбы. Запустили и долго ждали когда прекратится. `dmesg` сказал следующее.
+
+    ```
+    vagrant@vagrant:~$ dmesg
+    ...
+    [ 3961.537439] cgroup: fork rejected by pids controller in /user.slice/user-1000.slice/session-3.scope
+    vagrant@vagrant:~$
+    ```
+
+    >### Сработало ограниечение на максимальное количество процессов котороем можно посмотреть  в `ulimits -a`. Так же можно задать самостоятельно: `ulimit -u <n>`.
+    ```
+        vagrant@vagrant:~$ ulimit -a
+    core file size          (blocks, -c) 0
+    data seg size           (kbytes, -d) unlimited
+    scheduling priority             (-e) 0
+    file size               (blocks, -f) unlimited
+    pending signals                 (-i) 3571
+    max locked memory       (kbytes, -l) 65536
+    max memory size         (kbytes, -m) unlimited
+    open files                      (-n) 1024
+    pipe size            (512 bytes, -p) 8
+    POSIX message queues     (bytes, -q) 819200
+    real-time priority              (-r) 0
+    stack size              (kbytes, -s) 8192
+    cpu time               (seconds, -t) unlimited
+    max user processes              (-u) 3571
+    virtual memory          (kbytes, -v) unlimited
+    file locks                      (-x) unlimited
+    ```
