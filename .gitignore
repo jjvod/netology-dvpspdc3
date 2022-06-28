@@ -32,3 +32,4 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+05-virt-05-docker-swarm/src/terraform/key.json
