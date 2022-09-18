@@ -1,0 +1,40 @@
+User ubuntu
+IdentityFile ~/.ssh/id_rsa
+
+Host jjvod-voevodin.ru
+  HostName www.jjvod-voevodin.ru
+  PasswordAuthentication no
+  KbdInteractiveAuthentication no
+  PreferredAuthentications publickey
+  StrictHostKeyChecking no
+  UserKnownHostsFile=/dev/null
+
+Host db01.jjvod-voevodin.ru
+  HostName mysql-master
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa 
+
+Host db02.jjvod-voevodin.ru
+  HostName mysql-slave
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host app.jjvod-voevodin.ru
+  HostName wordpress
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host monitoring.jjvod-voevodin.ru
+  HostName monitoring
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host gitlab.jjvod-voevodin.ru
+  HostName gitlab
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host runner.jjvod-voevodin.ru
+  HostName runner
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
