@@ -9,8 +9,6 @@
     LC_ALL: en_US.UTF-8
 
   tasks:
-    - include_vars: ../../variables.yml
-
     - name: Update apt packages
       apt:
         upgrade: no
@@ -82,7 +80,7 @@
       command: sudo -u www-data cp /var/www/wordpress/wp-config-sample.php /var/www/wordpress/wp-config.php
 
     - name: Update WordPress host
-      command: sudo -u www-data sed -i 's/localhost/{{ db01_jjvodvoevodin_ru_ip_addr_internal }}/' /var/www/wordpress/wp-config.php
+      command: sudo -u www-data sed -i 's/localhost/mysql-master/' /var/www/wordpress/wp-config.php
 
     - name: Update WordPress database
       command: sudo -u www-data sed -i 's/database_name_here/wordpress/' /var/www/wordpress/wp-config.php

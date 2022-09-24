@@ -7,8 +7,6 @@
     LC_ALL: en_US.UTF-8
 
   tasks:
-    - include_vars: ../../variables.yml
-
     - name: Update apt packages
       apt:
         upgrade: no
@@ -26,7 +24,7 @@
       ansible.builtin.lineinfile:
         path: /etc/mysql/mysql.conf.d/mysqld.cnf
         regexp: '^bind-address'
-        line: bind-address = {{ db01_jjvodvoevodin_ru_ip_addr_internal }}
+        line: bind-address = 0.0.0.0
 
     - name: Update MySQL configuration with server id
       ansible.builtin.lineinfile:
@@ -50,11 +48,11 @@
         enabled: yes
 
     - name: Create replicator user SQL query
-      command: sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'replicator'@'{{ db02_jjvodvoevodin_ru_ip_addr_internal }}' IDENTIFIED BY '7K3dDfl0uo';"
+      command: sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'replicator'@'mysql-slave.%' IDENTIFIED BY 'maSTeTpaSSw0rd';"
       ignore_errors: yes
 
     - name: Provide user with grant replication slave query
-      command: sudo mysql -u root -e "GRANT REPLICATION SLAVE ON *.* TO 'replicator'@'{{ db02_jjvodvoevodin_ru_ip_addr_internal }}';"
+      command: sudo mysql -u root -e "GRANT REPLICATION SLAVE ON *.* TO 'replicator'@'mysql-slave.%';"
       ignore_errors: yes
 
     - name: Get and write Master status Position to `mysql_master_position` variable
@@ -62,16 +60,22 @@
         cmd: sudo mysql -u root -e "SHOW MASTER STATUS\G" | grep "Position" | cut -d ":" -f2 | xargs
       register: mysql_master_position
 
+    - name: Get and write Master status master log file to `mysql_master_file` variable
+      shell:
+        cmd: sudo mysql -u root -e "SHOW MASTER STATUS\G" | grep "File" | cut -d ":" -f2 | xargs
+      register: mysql_master_file
+
+    - set_fact: master_file="{{ mysql_master_file.stdout }}"
+
 - hosts: mysql_slave
   become: yes
   become_user: root
   remote_user: ubuntu
   vars:
-    - mysql_master_position: "{{ hostvars['db01.jjvod-voevodin.ru']['mysql_master_position'] }}"
+    mysql_master_position: "{{ hostvars['db01.jjvod-voevodin.ru']['mysql_master_position'] }}"
+    mysql_master_file: "{{ hostvars['db01.jjvod-voevodin.ru']['master_file'] }}"
 
   tasks:
-    - include_vars: ../../variables.yml
-
     - name: Update apt packages
       apt:
         upgrade: no
@@ -89,7 +93,7 @@
       ansible.builtin.lineinfile:
         path: /etc/mysql/mysql.conf.d/mysqld.cnf
         regexp: '^bind-address'
-        line: bind-address = {{ db02_jjvodvoevodin_ru_ip_addr_internal }}
+        line: bind-address = 0.0.0.0
 
     - name: Update MySQL configuration with server id
       ansible.builtin.lineinfile:
@@ -116,7 +120,7 @@
       command: sudo mysql -u root -e "STOP SLAVE;"
 
     - name: Change Master settings SQL query
-      command: sudo mysql -u root -e "CHANGE MASTER TO MASTER_HOST ='{{ db01_jjvodvoevodin_ru_ip_addr_internal }}', MASTER_USER ='replicator', MASTER_PASSWORD ='7K3dDfl0uo', MASTER_LOG_FILE = 'mysql-bin.000002', MASTER_LOG_POS = {{ mysql_master_position.stdout }};"
+      command: sudo mysql -u root -e "CHANGE MASTER TO MASTER_HOST ='mysql-master', MASTER_USER ='replicator', MASTER_PASSWORD ='maSTeTpaSSw0rd', MASTER_LOG_FILE = '{{ mysql_master_file }}', MASTER_LOG_POS = {{ mysql_master_position.stdout }};"
 
     - name: Start Slave SQL query
       command: sudo mysql -u root -e "START SLAVE;"
@@ -128,16 +132,14 @@
   remote_user: ubuntu
 
   tasks:
-    - include_vars: ../../variables.yml
-
     - name: Create wordpress user SQL query
-      command: sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'wordpress'@'{{ app_jjvodvoevodin_ru_ip_addr_internal }}' IDENTIFIED BY 'wordpress';"
+      command: sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'wordpress'@'wordpress.%' IDENTIFIED BY 'wordpress';"
 
     - name: Create wordpress database SQL query
       command: sudo mysql -u root -e "CREATE DATABASE IF NOT EXISTS wordpress;"
 
     - name: Provide wordpress user with all privileges SQL query
-      command: sudo mysql -u root -e "GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'{{ app_jjvodvoevodin_ru_ip_addr_internal }}'"
+      command: sudo mysql -u root -e "GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'wordpress.%'"
 
 - hosts: mysql_master, mysql_slave
   become: yes

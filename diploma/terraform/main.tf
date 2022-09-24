@@ -1,15 +1,9 @@
-# terraform {
-#     backend "s3" {
-#     endpoint                    = "storage.yandexcloud.net"
-#     bucket                      = "devops-diplom-yandexcloud"
-#     region                      = "ru-central1"
-#     key                         = "terraform.tfstate"
-#     access_key = ""
-#     secret_key = ""
-#     skip_region_validation      = true
-#     skip_credentials_validation = true
-#   }
-# }
+data "yandex_compute_image" "image-type" {
+  family = "ubuntu-2004-lts"
+}
+data "yandex_compute_image" "nat-image" {
+  family = "nat-instance-ubuntu"
+}
 
 resource "yandex_compute_instance" "nat_instance" {
   name     = "nat"
@@ -23,7 +17,7 @@ resource "yandex_compute_instance" "nat_instance" {
 
   boot_disk {
     initialize_params {
-      image_id = "fd84mnpg35f7s7b0f5lg"
+      image_id = data.yandex_compute_image.nat-image.id
     }
   }
 
@@ -35,7 +29,7 @@ resource "yandex_compute_instance" "nat_instance" {
 
   metadata = {
     test     = "test_str"
-    ssh-keys = "ubuntu:${var.SSH_ID_RSA_PUB}"
+    ssh-keys = "ubuntu:${file("~/.ssh/id_rsa.pub")}"
   }
 }
 
@@ -63,7 +57,7 @@ resource "yandex_compute_instance" "instances" {
 
   boot_disk {
     initialize_params {
-      image_id = "fd81d2d9ifd50gmvc03g"
+      image_id = data.yandex_compute_image.image-type.id
       size     = "${each.value.size}"
     }
   }
@@ -73,6 +67,10 @@ resource "yandex_compute_instance" "instances" {
   }
 
   metadata = {
-    ssh-keys = "ubuntu:${var.SSH_ID_RSA_PUB}"
+    ssh-keys = "ubuntu:${file("~/.ssh/id_rsa.pub")}"
+  }
+
+  scheduling_policy {
+    preemptible = true
   }
 }

@@ -3,8 +3,9 @@
   * [Этапы выполнения:](#этапы-выполнения)
       * [Регистрация доменного имени](#1-регистрация-доменного-имени)
       * [Создание инфраструктуры](#2-создание-инфраструктуры)
-          * [Установка Nginx и LetsEncrypt](#установка-nginx)
-          * [Установка кластера MySQL](#установка-mysql)
+      * [Подготовка Ansible](#3-подготовка-ansible)
+          * [Установка Nginx и LetsEncrypt](#установка-nginx-и-letsencrypt)
+          * [Установка кластера MySQL](#установка-кластера-mysql)
           * [Установка WordPress](#установка-wordpress)
           * [Установка Gitlab CE, Gitlab Runner и настройка CI/CD](#установка-gitlab)
           * [Установка Prometheus, Alert Manager, Node Exporter и Grafana](#установка-prometheus)
@@ -61,7 +62,7 @@ user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/terraform$ yc config set fold
 user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/terraform$ source ./env.sh 
 ```
 
-2. Подготовили [backend](https://www.terraform.io/docs/language/settings/backends/index.html) для Terraform в S3 bucket в созданном YC аккаунте.
+2. Подготовили [backend.tf](./terraform/backend.tf) для Terraform в S3 bucket в созданном YC аккаунте.
 ```terraform
 terraform {
     backend "s3" {
@@ -78,7 +79,7 @@ terraform {
 ```
 ![Bucket](img/bucket.png)
 
-3. В `provider.tf` добавим конфигурацию провайдера `yandex`:
+3. В [provider.tf](./terraform/provider.tf) добавим конфигурацию провайдера `yandex`:
 
 ```terraform
 terraform {
@@ -97,26 +98,25 @@ provider "yandex" {
   zone      = "ru-central1-a"
 }
 ```
-4. В `variables.tf` обьявим переменные.
+4. В [variables.tf](./terraform/variables.tf) обьявим переменные.
 
 ```terraform
 variable "YANDEX_TOKEN" {}
 variable "YC_FOLDER_ID" {}
 variable "YC_CLOUD_ID" {}
-variable "SSH_ID_RSA_PUB" {}
 ```
-Добавим аутентификационные данные в переменные окружения с помощью `env.sh`
+
+5. Добавим аутентификационные данные в переменные окружения с помощью `env.sh`
 ```bash
 #!/bin/bash
 #source ./env.sh # for export to current shell
-export TF_VAR_SSH_ID_RSA_PUB=$(cat ~/.ssh/id_rsa.pub)
 export TF_VAR_YANDEX_TOKEN=$(yc iam create-token)
 export TF_VAR_YC_CLOUD_ID=$(yc config get cloud-id)
 export TF_VAR_YC_FOLDER_ID=$(yc config get folder-id)
 ```
 
 
-3. Настроили [workspaces](https://www.terraform.io/docs/language/state/workspaces.html)
+6. Настроили [workspaces](https://www.terraform.io/docs/language/state/workspaces.html)
 ```bash
 user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/terraform$ terraform workspace new stage
 Created and switched to workspace "stage"!
@@ -124,174 +124,537 @@ Created and switched to workspace "stage"!
 user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/terraform$ terraform workspace list
   default
 * stage
-
 ```
-4. Создайте VPC с подсетями в разных зонах доступности.
 
-5. Убедитесь, что теперь вы можете выполнить команды `terraform destroy` и `terraform apply` без дополнительных ручных действий.
-6. В случае использования [Terraform Cloud](https://app.terraform.io/) в качестве [backend](https://www.terraform.io/docs/language/settings/backends/index.html) убедитесь, что применение изменений успешно проходит, используя web-интерфейс Terraform cloud.
+7. Подготовили `vpc` в файле [network.tf](./terraform/network.tf)
 
-Цель:
+```terraform
+resource "yandex_vpc_network" "vpc_network" {  name = "vpc-network" }
 
-1. Повсеместно применять IaaC подход при организации (эксплуатации) инфраструктуры.
-2. Иметь возможность быстро создавать (а также удалять) виртуальные машины и сети. С целью экономии денег на вашем аккаунте в YandexCloud.
+resource "yandex_vpc_subnet" "private_vpc_subnet" {
+  name           = "private-vpc-subnet"
+  network_id     = yandex_vpc_network.vpc_network.id
+  zone           = "ru-central1-a"
+  v4_cidr_blocks = ["192.168.1.0/24"]
+  route_table_id = yandex_vpc_route_table.nat_vpc_route_table.id
+}
 
-Ожидаемые результаты:
+resource "yandex_vpc_subnet" "public_vpc_subnet" {
+  name           = "public-vpc-subnet"
+  network_id     = yandex_vpc_network.vpc_network.id
+  zone           = "ru-central1-a"
+  v4_cidr_blocks = ["192.168.2.0/24"]
+}
 
-1. Terraform сконфигурирован и создание инфраструктуры посредством Terraform возможно без дополнительных ручных действий.
-2. Полученная конфигурация инфраструктуры является предварительной, поэтому в ходе дальнейшего выполнения задания возможны изменения.
+resource "yandex_dns_zone" "dns_zone" {
+  name = "public-dns-zone"
+  zone             = "jjvod-voevodin.ru."
+  public           = true
+  private_networks = [yandex_vpc_network.vpc_network.id]
+}
+
+resource "yandex_dns_recordset" "www_recordset" {
+  zone_id = yandex_dns_zone.dns_zone.id
+  for_each = toset( ["www", "gitlab", "grafana", "prometheus","alertmanager"] )
+  name = "${each.key}.jjvod-voevodin.ru."
+  type    = "A"
+  ttl     = 600
+  data    = [yandex_compute_instance.nat_instance.network_interface.0.nat_ip_address]
+}
+
+resource "yandex_vpc_route_table" "nat_vpc_route_table" {
+  name       = "nat-route-table"
+  network_id = yandex_vpc_network.vpc_network.id
+
+  static_route {
+    destination_prefix = "0.0.0.0/0"
+    next_hop_address   = yandex_compute_instance.nat_instance.network_interface.0.ip_address
+  }
+}
+```
+8.Описали инстансы в [main.tf](./terraform/main.tf)
+
+```terraform
+data "yandex_compute_image" "image-type" {
+  family = "ubuntu-2004-lts"
+}
+data "yandex_compute_image" "nat-image" {
+  family = "nat-instance-ubuntu"
+}
+
+resource "yandex_compute_instance" "nat_instance" {
+  name     = "nat"
+  hostname = "nat"
+  zone     = "ru-central1-a"
+
+  resources {
+    cores  = 2
+    memory = 2
+  }
+
+  boot_disk {
+    initialize_params {
+      image_id = data.yandex_compute_image.nat-image.id
+    }
+  }
+
+  network_interface {
+    subnet_id = yandex_vpc_subnet.public_vpc_subnet.id
+    nat_ip_address = "51.250.88.230"
+    nat       = true
+  }
+
+  metadata = {
+    test     = "test_str"
+    ssh-keys = "ubuntu:${file("~/.ssh/id_rsa.pub")}"
+  }
+}
+
+locals{
+  instance_map={
+    "db01_instance"       = {name = "mysql-master", cores = 4, memory = 4, size = 10},
+    "db02_instance"       = {name = "mysql-slave",  cores = 4, memory = 4, size = 10},
+    "app_instance"        = {name = "wordpress",    cores = 4, memory = 4, size = 10},
+    "monitoring_instance" = {name = "monitoring",   cores = 4, memory = 4, size = 10},
+    "gitlab_instance"     = {name = "gitlab",       cores = 8, memory = 8, size = 30},
+    "runner_instance"     = {name = "runner",       cores = 4, memory = 4, size = 30}
+  }
+}
+
+resource "yandex_compute_instance" "instances" {
+  for_each = local.instance_map
+  name     = "${each.value.name}"
+  hostname = "${each.value.name}"
+  zone     = "ru-central1-a"
+
+  resources {
+    cores  = "${each.value.cores}"
+    memory = "${each.value.memory}"
+  }
+
+  boot_disk {
+    initialize_params {
+      image_id = data.yandex_compute_image.image-type.id
+      size     = "${each.value.size}"
+    }
+  }
+
+  network_interface {
+    subnet_id = yandex_vpc_subnet.private_vpc_subnet.id
+  }
+
+  metadata = {
+    ssh-keys = "ubuntu:${file("~/.ssh/id_rsa.pub")}"
+  }
+
+  scheduling_policy {
+    preemptible = true
+  }
+}
+```
+9. Результат выполнения `terraform apply`
+
+![result](img/result.png)
+
+![instances](img/instanses.png)
+
+![dns](img/dns.png)
 
 ---
+
+### 3. Подготовка Ansible
+
+Для подключения к нашим серверам погдотовим [ansible.cfg](./terraform/ansible.cfg)
+
+```config
+[defaults]
+inventory=../ansible/inventory
+roles_path = ../ansible/roles 
+deprecation_warnings=False
+command_warnings=False
+ansible_port=22
+host_key_checking = False
+[ssh_connection]
+ssh_args = -F ./ssh_config 
+```
+[ssh_config](./terraform/ssh_config) для `Ansible`
+
+```config
+User ubuntu
+IdentityFile ~/.ssh/id_rsa
+
+Host jjvod-voevodin.ru
+  HostName www.jjvod-voevodin.ru
+  PasswordAuthentication no
+  KbdInteractiveAuthentication no
+  PreferredAuthentications publickey
+  StrictHostKeyChecking no
+  UserKnownHostsFile=/dev/null
+
+Host db01.jjvod-voevodin.ru
+  HostName mysql-master
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa 
+
+Host db02.jjvod-voevodin.ru
+  HostName mysql-slave
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host app.jjvod-voevodin.ru
+  HostName wordpress
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host monitoring.jjvod-voevodin.ru
+  HostName monitoring
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host gitlab.jjvod-voevodin.ru
+  HostName gitlab
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+Host runner.jjvod-voevodin.ru
+  HostName runner
+    ProxyJump jjvod-voevodin.ru
+    ProxyCommand ssh -W %h:%p -i .ssh/id_rsa
+
+```
+
 ### Установка Nginx и LetsEncrypt
 
-Необходимо разработать Ansible роль для установки Nginx и LetsEncrypt.
+Создали [Ansible роль](./ansible/roles/entrance/tasks/main.yml) для установки Nginx и LetsEncrypt.
 
-**Для получения LetsEncrypt сертификатов во время тестов своего кода пользуйтесь [тестовыми сертификатами](https://letsencrypt.org/docs/staging-environment/), так как количество запросов к боевым серверам LetsEncrypt [лимитировано](https://letsencrypt.org/docs/rate-limits/).**
+1. Создали конфигурацию для reverse proxy с поддержкой TLS для обеспечения безопасного доступа к веб-сервисам по HTTPS.
+```nginx
+          server {
+              listen 80;
+              server_name www.jjvod-voevodin.ru;
+          
+              location / {
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+          
+                proxy_pass http://wordpress;
+                proxy_read_timeout 90;
+          
+                proxy_redirect http://wordpress http://www.jjvod-voevodin.ru;
+              }
+          }
+          
+          server {
+              listen 80;
+              server_name gitlab.jjvod-voevodin.ru;
+          
+              location / {
+                client_max_body_size 100m;
+                
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+          
+                proxy_pass http://gitlab:10080;
+                proxy_read_timeout 90;
+          
+                proxy_redirect http://gitlab:10080 https://gitlab.jjvod-voevodin.ru;
+              }
+          }
+          
+          server {
+              listen 80;
+              server_name grafana.jjvod-voevodin.ru;
+          
+              location / {
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+          
+                proxy_pass http://monitoring:3000;
+                proxy_read_timeout 90;
+          
+                proxy_redirect http://monitoring:3000 https://grafana.jjvod-voevodin.ru;
+              }
+          }
+          
+          server {
+              listen 80;
+              server_name prometheus.jjvod-voevodin.ru;
+          
+              location / {
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+          
+                proxy_pass http://monitoring:9090;
+                proxy_read_timeout 90;
+          
+                proxy_redirect http://monitoring:9090 https://prometheus.jjvod-voevodin.ru;
+              }
+          }
+          
+          server {
+              listen 80;
+              server_name alertmanager.jjvod-voevodin.ru;
+          
+              location / {
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+          
+                proxy_pass http://monitoring:9093;
+                proxy_read_timeout 90;
+          
+                proxy_redirect http://monitoring:9093 https://alertmanager.jjvod-voevodin.ru;
+              }
+          }
+```
 
-Рекомендации:
-  - Имя сервера: `you.domain`
-  - Характеристики: 2vCPU, 2 RAM, External address (Public) и Internal address.
+После отработки роли получили валидный сертификат
 
-Цель:
-
-1. Создать reverse proxy с поддержкой TLS для обеспечения безопасного доступа к веб-сервисам по HTTPS.
-
-Ожидаемые результаты:
-
-1. В вашей доменной зоне настроены все A-записи на внешний адрес этого сервера:
-    - `https://www.you.domain` (WordPress)
-    - `https://gitlab.you.domain` (Gitlab)
-    - `https://grafana.you.domain` (Grafana)
-    - `https://prometheus.you.domain` (Prometheus)
-    - `https://alertmanager.you.domain` (Alert Manager)
-2. Настроены все upstream для выше указанных URL, куда они сейчас ведут на этом шаге не важно, позже вы их отредактируете и укажите верные значения.
-2. В браузере можно открыть любой из этих URL и увидеть ответ сервера (502 Bad Gateway). На текущем этапе выполнение задания это нормально!
+![sert](img/sert.png)
 
 ___
 ### Установка кластера MySQL
 
-Необходимо разработать Ansible роль для установки кластера MySQL.
+Запустим [роль](ansible/roles/db/tasks/main.yml) кластера MySQL:
 
-Рекомендации:
-  - Имена серверов: `db01.you.domain` и `db02.you.domain`
-  - Характеристики: 4vCPU, 4 RAM, Internal address.
+```bash
+user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/terraform$ ansible-playbook ../ansible/roles/db/tasks/main.yml 
 
-Цель:
+...
 
-1. Получить отказоустойчивый кластер баз данных MySQL.
+PLAY RECAP ************************************************************************************************************************************************************
+db01.jjvod-voevodin.ru     : ok=27   changed=15   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+db02.jjvod-voevodin.ru     : ok=21   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0 
+```
 
-Ожидаемые результаты:
+Проверяем статус `mysql-master` 
 
-1. MySQL работает в режиме репликации Master/Slave.
-2. В кластере автоматически создаётся база данных c именем `wordpress`.
-3. В кластере автоматически создаётся пользователь `wordpress` с полными правами на базу `wordpress` и паролем `wordpress`.
+```sql
+ubuntu@mysql-master:~$ sudo -i
+root@mysql-master:~# mysql
 
-**Вы должны понимать, что в рамках обучения это допустимые значения, но в боевой среде использование подобных значений не приемлимо! Считается хорошей практикой использовать логины и пароли повышенного уровня сложности. В которых будут содержаться буквы верхнего и нижнего регистров, цифры, а также специальные символы!**
+mysql> show processlist;
++----+-----------------+----------------------------------------+------+-------------+------+-----------------------------------------------------------------+------------------+
+| Id | User            | Host                                   | db   | Command     | Time | State                                                           | Info             |
++----+-----------------+----------------------------------------+------+-------------+------+-----------------------------------------------------------------+------------------+
+|  5 | event_scheduler | localhost                              | NULL | Daemon      |  328 | Waiting on empty queue                                          | NULL             |
+| 15 | root            | localhost                              | NULL | Query       |    0 | init                                                            | show processlist |
+| 23 | replicator      | mysql-slave.ru-central1.internal:58342 | NULL | Binlog Dump |   26 | Source has sent all binlog to replica; waiting for more updates | NULL             |
++----+-----------------+----------------------------------------+------+-------------+------+-----------------------------------------------------------------+------------------+
+3 rows in set (0.00 sec)
+
+mysql> show slave hosts;
++-----------+------+------+-----------+--------------------------------------+
+| Server_id | Host | Port | Master_id | Slave_UUID                           |
++-----------+------+------+-----------+--------------------------------------+
+|         2 |      | 3306 |         1 | 937d6da6-3c1d-11ed-89cf-d00d92e854aa |
++-----------+------+------+-----------+--------------------------------------+
+1 row in set, 1 warning (0.00 sec)
+
+```
+
+Проверяем статус `mysql-slave` 
+
+```sql
+mysql> show slave status\G
+*************************** 1. row ***************************
+               Slave_IO_State: Waiting for source to send event
+                  Master_Host: mysql-master
+                  Master_User: replicator
+                  Master_Port: 3306
+                Connect_Retry: 60
+              Master_Log_File: mysql-bin.000002
+          Read_Master_Log_Pos: 1539
+               Relay_Log_File: mysql-relay-bin.000002
+                Relay_Log_Pos: 1126
+        Relay_Master_Log_File: mysql-bin.000002
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+              Replicate_Do_DB: 
+          Replicate_Ignore_DB: 
+           Replicate_Do_Table: 
+       Replicate_Ignore_Table: 
+      Replicate_Wild_Do_Table: 
+  Replicate_Wild_Ignore_Table: 
+                   Last_Errno: 0
+                   Last_Error: 
+                 Skip_Counter: 0
+          Exec_Master_Log_Pos: 1539
+              Relay_Log_Space: 1336
+              Until_Condition: None
+               Until_Log_File: 
+                Until_Log_Pos: 0
+           Master_SSL_Allowed: No
+           Master_SSL_CA_File: 
+           Master_SSL_CA_Path: 
+              Master_SSL_Cert: 
+            Master_SSL_Cipher: 
+               Master_SSL_Key: 
+        Seconds_Behind_Master: 0
+Master_SSL_Verify_Server_Cert: No
+                Last_IO_Errno: 0
+                Last_IO_Error: 
+               Last_SQL_Errno: 0
+               Last_SQL_Error: 
+  Replicate_Ignore_Server_Ids: 
+             Master_Server_Id: 1
+                  Master_UUID: 3744182e-3c1d-11ed-bad2-d00d20f7b233
+             Master_Info_File: mysql.slave_master_info
+                    SQL_Delay: 0
+          SQL_Remaining_Delay: NULL
+      Slave_SQL_Running_State: Replica has read all relay log; waiting for more updates
+           Master_Retry_Count: 86400
+                  Master_Bind: 
+      Last_IO_Error_Timestamp: 
+     Last_SQL_Error_Timestamp: 
+               Master_SSL_Crl: 
+           Master_SSL_Crlpath: 
+           Retrieved_Gtid_Set: 
+            Executed_Gtid_Set: 
+                Auto_Position: 0
+         Replicate_Rewrite_DB: 
+                 Channel_Name: 
+           Master_TLS_Version: 
+       Master_public_key_path: 
+        Get_master_public_key: 0
+            Network_Namespace: 
+1 row in set, 1 warning (0.00 sec)
+```
+База и пользователь реплицируются
+
+```sql
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
+| wordpress          |
++--------------------+
+5 rows in set (0.00 sec)
+
+mysql> select user,host from mysql.user;
++------------------+-------------+
+| user             | host        |
++------------------+-------------+
+| debian-sys-maint | localhost   |
+| mysql.infoschema | localhost   |
+| mysql.session    | localhost   |
+| mysql.sys        | localhost   |
+| root             | localhost   |
+| wordpress        | wordpress.% |
++------------------+-------------+
+6 rows in set (0.00 sec)
+
+```
 
 ___
 ### Установка WordPress
 
-Необходимо разработать Ansible роль для установки WordPress.
+Запустим [роль](ansible/roles/app/tasks/main.yml) для WordPress:
 
-Рекомендации:
-  - Имя сервера: `app.you.domain`
-  - Характеристики: 4vCPU, 4 RAM, Internal address.
+![wordpres](img/wordpres.png)
 
-Цель:
-
-1. Установить [WordPress](https://wordpress.org/download/). Это система управления содержимым сайта ([CMS](https://ru.wikipedia.org/wiki/Система_управления_содержимым)) с открытым исходным кодом.
-
-
-По данным W3techs, WordPress используют 64,7% всех веб-сайтов, которые сделаны на CMS. Это 41,1% всех существующих в мире сайтов. Эту платформу для своих блогов используют The New York Times и Forbes. Такую популярность WordPress получил за удобство интерфейса и большие возможности.
-
-Ожидаемые результаты:
-
-1. Виртуальная машина на которой установлен WordPress и Nginx/Apache (на ваше усмотрение).
-2. В вашей доменной зоне настроена A-запись на внешний адрес reverse proxy:
-    - `https://www.you.domain` (WordPress)
-3. На сервере `you.domain` отредактирован upstream для выше указанного URL и он смотрит на виртуальную машину на которой установлен WordPress.
-4. В браузере можно открыть URL `https://www.you.domain` и увидеть главную страницу WordPress.
 ---
 ### Установка Gitlab CE и Gitlab Runner
 
-Необходимо настроить CI/CD систему для автоматического развертывания приложения при изменении кода.
 
-Рекомендации:
-  - Имена серверов: `gitlab.you.domain` и `runner.you.domain`
-  - Характеристики: 4vCPU, 4 RAM, Internal address.
+1. Запустим [роль](ansible/roles/monitoring/tasks/main.yml) для Gitlab и Runner:
 
-Цель:
-1. Построить pipeline доставки кода в среду эксплуатации, то есть настроить автоматический деплой на сервер `app.you.domain` при коммите в репозиторий с WordPress.
+```bash
+user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/terraform$ ansible-playbook ../ansible/roles/gitlab/tasks/main.yml 
 
-Подробнее об [Gitlab CI](https://about.gitlab.com/stages-devops-lifecycle/continuous-integration/)
+...
+PLAY RECAP ************************************************************************************************************************************************************
+gitlab.jjvod-voevodin.ru   : ok=15   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+runner.jjvod-voevodin.ru   : ok=11   changed=7    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0  
+```
 
-Ожидаемый результат:
+2. Создадим новый `gitlab-runner`:
 
-1. Интерфейс Gitlab доступен по https.
-2. В вашей доменной зоне настроена A-запись на внешний адрес reverse proxy:
-    - `https://gitlab.you.domain` (Gitlab)
-3. На сервере `you.domain` отредактирован upstream для выше указанного URL и он смотрит на виртуальную машину на которой установлен Gitlab.
-3. При любом коммите в репозиторий с WordPress и создании тега (например, v1.0.0) происходит деплой на виртуальную машину.
+```shell
+root@runner:~# gitlab-runner register
+Runtime platform                                    arch=amd64 os=linux pid=7598 revision=43b2dc3d version=15.4.0
+Running in system-mode.                            
+                                                   
+Enter the GitLab instance URL (for example, https://gitlab.com/):
+http://gitlab:10080
+Enter the registration token:
+GR13489414zVm1aSAHvgsC4SmxS1i
+Enter a description for the runner:
+[runner]: wordpress
+Enter tags for the runner (comma-separated):
+wordpress
+Enter optional maintenance note for the runner:
+wordpress
+Registering runner... succeeded                     runner=GR13489414zVm1aSA
+Enter an executor: docker+machine, docker-ssh+machine, kubernetes, custom, parallels, shell, virtualbox, docker, docker-ssh, ssh:
+ssh
+Enter the SSH server address (for example, my.server.com):
+wordpress
+Enter the SSH server port (for example, 22):
+22
+Enter the SSH user (for example, root):
+ubuntu
+Enter the SSH password (for example, docker.io):
+
+Enter the path to the SSH identity file (for example, /home/user/.ssh/id_rsa):
+/root/.ssh/id_rsa
+Runner registered successfully. Feel free to start it, but if it's running already the config should be automatically reloaded!
+ 
+Configuration (with the authentication token) was saved in "/etc/gitlab-runner/config.toml" 
+```
+
+3. В Wordpress-проекте создадим pipeline-файл `.gitlab-ci.yml`:
+
+```yaml
+deploy-job:
+  stage: deploy
+  script:
+    - echo "Deploy" 
+    # Upload to server
+    - rsync -vz  ./* /var/www/wordpress/
+    - rm -rf /var/www/wordpress/.git
+    # Provide file permissions
+    - sudo chown -R www-data /var/www/wordpress/
+```
+
+4. Добавим .git-репозиторий для Wordpress-проекта:
+
+```git
+user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/wordpress$ git clone https://gitlab.jjvod-voevodin.ru/gitlab-instance-d0cee118/wordpress.git
+Клонирование в «wordpress»…
+```
+
+Проверим URL [gitlab.maliushkin.ru](https://gitlab.maliushkin.ru):
+
+![Gitlab project](img/gitlab.png)
+
+![Gitlab runner](img/runner.png)
+
+![result](img/pipe.png)
 
 ___
 ### Установка Prometheus, Alert Manager, Node Exporter и Grafana
 
-Необходимо разработать Ansible роль для установки Prometheus, Alert Manager и Grafana.
+Запустим [роль](ansible/roles/monitoring/tasks/main.yml) для Prometheus, Alert Manager и Grafana:
 
-Рекомендации:
-  - Имя сервера: `monitoring.you.domain`
-  - Характеристики: 4vCPU, 4 RAM, Internal address.
+![prometheus](img/prometeus.png)
 
-Цель:
+![alertmanager](img/alert.png)
 
-1. Получение метрик со всей инфраструктуры.
+![grafana](img/grafana.png)
 
-Ожидаемые результаты:
 
-1. Интерфейсы Prometheus, Alert Manager и Grafana доступены по https.
-2. В вашей доменной зоне настроены A-записи на внешний адрес reverse proxy:
-  - `https://grafana.you.domain` (Grafana)
-  - `https://prometheus.you.domain` (Prometheus)
-  - `https://alertmanager.you.domain` (Alert Manager)
-3. На сервере `you.domain` отредактированы upstreams для выше указанных URL и они смотрят на виртуальную машину на которой установлены Prometheus, Alert Manager и Grafana.
-4. На всех серверах установлен Node Exporter и его метрики доступны Prometheus.
-5. У Alert Manager есть необходимый [набор правил](https://awesome-prometheus-alerts.grep.to/rules.html) для создания алертов.
-2. В Grafana есть дашборд отображающий метрики из Node Exporter по всем серверам.
-3. В Grafana есть дашборд отображающий метрики из MySQL (*).
-4. В Grafana есть дашборд отображающий метрики из WordPress (*).
 
-*Примечание: дашборды со звёздочкой являются опциональными заданиями повышенной сложности их выполнение желательно, но не обязательно.*
-
----
-## Что необходимо для сдачи задания?
-
-1. Репозиторий со всеми Terraform манифестами и готовность продемонстрировать создание всех ресурсов с нуля.
-2. Репозиторий со всеми Ansible ролями и готовность продемонстрировать установку всех сервисов с нуля.
-3. Скриншоты веб-интерфейсов всех сервисов работающих по HTTPS на вашем доменном имени.
-  - `https://www.you.domain` (WordPress)
-  - `https://gitlab.you.domain` (Gitlab)
-  - `https://grafana.you.domain` (Grafana)
-  - `https://prometheus.you.domain` (Prometheus)
-  - `https://alertmanager.you.domain` (Alert Manager)
-4. Все репозитории рекомендуется хранить на одном из ресурсов ([github.com](https://github.com) или [gitlab.com](https://gitlab.com)).
-
----
-## Как правильно задавать вопросы дипломному руководителю?
-
-**Что поможет решить большинство частых проблем:**
-
-1. Попробовать найти ответ сначала самостоятельно в интернете или в
-  материалах курса и ДЗ и только после этого спрашивать у дипломного
-  руководителя. Навык поиска ответов пригодится вам в профессиональной
-  деятельности.
-2. Если вопросов больше одного, то присылайте их в виде нумерованного
-  списка. Так дипломному руководителю будет проще отвечать на каждый из
-  них.
-3. При необходимости прикрепите к вопросу скриншоты и стрелочкой
-  покажите, где не получается.
-
-**Что может стать источником проблем:**
-
-1. Вопросы вида «Ничего не работает. Не запускается. Всё сломалось». Дипломный руководитель не сможет ответить на такой вопрос без дополнительных уточнений. Цените своё время и время других.
-2. Откладывание выполнения курсового проекта на последний момент.
-3. Ожидание моментального ответа на свой вопрос. Дипломные руководители работающие разработчики, которые занимаются, кроме преподавания, своими проектами. Их время ограничено, поэтому постарайтесь задавать правильные вопросы, чтобы получать быстрые ответы :)

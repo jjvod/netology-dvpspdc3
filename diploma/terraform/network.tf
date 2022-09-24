@@ -4,16 +4,15 @@ resource "yandex_vpc_subnet" "private_vpc_subnet" {
   name           = "private-vpc-subnet"
   network_id     = yandex_vpc_network.vpc_network.id
   zone           = "ru-central1-a"
-  v4_cidr_blocks = ["10.100.1.0/24"]
+  v4_cidr_blocks = ["192.168.1.0/24"]
   route_table_id = yandex_vpc_route_table.nat_vpc_route_table.id
-  depends_on = [yandex_vpc_route_table.nat_vpc_route_table]
 }
 
 resource "yandex_vpc_subnet" "public_vpc_subnet" {
   name           = "public-vpc-subnet"
   network_id     = yandex_vpc_network.vpc_network.id
   zone           = "ru-central1-a"
-  v4_cidr_blocks = ["10.100.2.0/24"]
+  v4_cidr_blocks = ["192.168.2.0/24"]
 }
 
 resource "yandex_dns_zone" "dns_zone" {
@@ -40,8 +39,4 @@ resource "yandex_vpc_route_table" "nat_vpc_route_table" {
     destination_prefix = "0.0.0.0/0"
     next_hop_address   = yandex_compute_instance.nat_instance.network_interface.0.ip_address
   }
-
-  depends_on = [
-    yandex_compute_instance.nat_instance
-  ]
 }
