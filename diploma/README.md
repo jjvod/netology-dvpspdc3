@@ -658,3 +658,14 @@ ___
 
 
 
+## Скриншоты с сертификатами
+
+![gitlabsert](img/gitlabsert.png)
+
+![wordpresssert](img/wordpresssert.png)
+
+![prometheussert](img/prometheussert.png)
+
+![alertmanagersert](img/alertmanagersert.png)
+
+![grafanasert](img/grafanasert.png)
