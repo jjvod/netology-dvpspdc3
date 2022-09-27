@@ -637,7 +637,7 @@ user@user-Aspire-5750G:~/netology-dvpspdc3/diploma/wordpress$ git clone https://
 Клонирование в «wordpress»…
 ```
 
-Проверим URL [gitlab.maliushkin.ru](https://gitlab.maliushkin.ru):
+Проверим URL [gitlab.jjvod-voevodin.ru](https://gitlab.jjvod-voevodin.ru/test.html):
 
 ![Gitlab project](img/gitlab.png)
 
